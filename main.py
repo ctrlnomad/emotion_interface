@@ -144,13 +144,15 @@ def main() -> int:
         print(llm_client.init_error, file=sys.stderr)
     show_landmarks = True
     use_black_background = False
+    thoughts_enabled = True
 
     selected_landmark_indices: Optional[List[int]] = None
 
     try:
         with FaceMeshDetector() as detector:
             print(
-                "Controls: press 'q' to quit, 'l' to toggle landmarks display, 'b' to toggle background."
+                "Controls: press 'q' to quit, 'l' to toggle landmarks display, "
+                "'b' to toggle background, 't' to toggle thoughts."
             )
             while True:
                 ok, frame = cap.read()
@@ -215,6 +217,7 @@ def main() -> int:
                 status_text = (
                     f"Landmarks: {'on' if show_landmarks else 'off'}"
                     f" | Bg: {'black' if use_black_background else 'camera'}"
+                    f" | Thoughts: {'on' if thoughts_enabled else 'off'}"
                 )
                 cv2.putText(
                     annotated,
@@ -279,6 +282,9 @@ def main() -> int:
                     show_landmarks = not show_landmarks
                 if key == ord("b"):
                     use_black_background = not use_black_background
+                if key == ord("t"):
+                    thoughts_enabled = not thoughts_enabled
+                    thought_engine.set_streaming_enabled(thoughts_enabled)
     finally:
         cap.release()
         cv2.destroyAllWindows()

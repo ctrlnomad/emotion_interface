@@ -96,6 +96,7 @@ class ThoughtEngine:
                 "queue_size": self._request_queue.qsize(),
             },
         )
+        self._streaming_enabled = True
 
     def stop(self) -> None:
         if self._worker:
@@ -103,6 +104,22 @@ class ThoughtEngine:
             self._worker.join(timeout=1.0)
             logger.debug("ThoughtEngine worker stop requested")
             self._worker = None
+
+    def set_streaming_enabled(self, enabled: bool) -> None:
+        if self._streaming_enabled == enabled:
+            return
+
+        self._streaming_enabled = enabled
+        if not enabled:
+            logger.debug("Thought streaming disabled; clearing pending state")
+            self._clear_pending_requests()
+            self._states.clear()
+        else:
+            logger.debug("Thought streaming enabled")
+            self._schedule_next_spawn(time.monotonic())
+
+    def streaming_enabled(self) -> bool:
+        return self._streaming_enabled
 
     def update(
         self,
@@ -167,7 +184,8 @@ class ThoughtEngine:
         self._schedule_next_spawn(now)
 
         if (
-            not emotion
+            not self._streaming_enabled
+            or not emotion
             or face_landmarks is None
             or len(self._states) >= self._config.max_active_thoughts
         ):
@@ -417,6 +435,21 @@ class ThoughtEngine:
         height, width, _ = frame_shape
         landmark = face_landmarks.landmark[index]
         return int(landmark.x * width), int(landmark.y * height)
+
+    def _clear_pending_requests(self) -> None:
+        while True:
+            try:
+                item = self._request_queue.get_nowait()
+                if item is None:
+                    self._request_queue.put(None)
+                    break
+            except queue.Empty:
+                break
+        while True:
+            try:
+                self._event_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def _random_interval(self) -> float:
         low, high = self._config.spawn_interval_range
