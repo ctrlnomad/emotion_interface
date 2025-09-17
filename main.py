@@ -3,6 +3,8 @@ import time
 import cv2
 import mediapipe as mp
 
+from emotion_classifier import RuleBasedEmotionClassifier
+
 
 WINDOW_TITLE = "Face Landmarks"
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -69,6 +71,7 @@ def main() -> int:
 
     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
     fps_counter = FPSCounter()
+    classifier = RuleBasedEmotionClassifier()
     show_landmarks = True
 
     try:
@@ -82,9 +85,24 @@ def main() -> int:
 
                 results = detector.process(frame)
                 annotated = frame.copy()
+                emotion_text = "Emotion: --"
+                rule_text = "Rule: --"
+                feature_lines = []
 
-                if show_landmarks and results.multi_face_landmarks:
-                    for face_landmarks in results.multi_face_landmarks:
+                if results.multi_face_landmarks:
+                    face_landmarks = results.multi_face_landmarks[0]
+                    emotion_result = classifier.classify(face_landmarks)
+                    emotion_text = (
+                        f"Emotion: {emotion_result.label}"
+                        f" ({emotion_result.confidence:.2f})"
+                    )
+                    rule_text = f"Rule: {emotion_result.rule}"
+                    feature_lines = [
+                        f"{name}: {value:.3f}"
+                        for name, value in emotion_result.features.items()
+                    ]
+
+                    if show_landmarks:
                         draw_landmarks(annotated, face_landmarks)
 
                 fps = fps_counter.update()
@@ -109,6 +127,39 @@ def main() -> int:
                     2,
                     lineType=cv2.LINE_AA,
                 )
+                cv2.putText(
+                    annotated,
+                    emotion_text,
+                    (10, 85),
+                    FONT,
+                    0.7,
+                    (255, 255, 255),
+                    2,
+                    lineType=cv2.LINE_AA,
+                )
+                cv2.putText(
+                    annotated,
+                    rule_text,
+                    (10, 115),
+                    FONT,
+                    0.7,
+                    (200, 200, 200),
+                    2,
+                    lineType=cv2.LINE_AA,
+                )
+
+                feature_base_y = 145
+                for idx, feat_text in enumerate(feature_lines):
+                    cv2.putText(
+                        annotated,
+                        feat_text,
+                        (10, feature_base_y + idx * 25),
+                        FONT,
+                        0.6,
+                        (180, 220, 255),
+                        2,
+                        lineType=cv2.LINE_AA,
+                    )
 
                 cv2.imshow(WINDOW_TITLE, annotated)
 

@@ -22,3 +22,9 @@ Controls inside the preview window:
 - Press `q` to quit the script
 
 If the webcam cannot be opened (for example, when running in a sandboxed environment), the script prints a helpful error message and exits.
+
+## Emotion classification
+The demo includes a lightweight rule-based classifier targeting the emotions `confused`, `happy`, and `distressed`.
+It analyses eyebrow height/asymmetry, eye openness, and mouth shape to infer the most likely state, then smooths predictions over the last few frames.
+The active emotion, triggering rule, and the underlying feature values are displayed in the video overlay to help with manual calibration.
+
