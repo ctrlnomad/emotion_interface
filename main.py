@@ -6,6 +6,7 @@ from typing import List, Optional
 
 import cv2
 import mediapipe as mp
+import numpy as np
 
 from config import (
     DEFAULT_LLM_CONFIG,
@@ -105,8 +106,6 @@ def _select_uniform_landmark_indices(
 
     selected.sort()
     return selected
-
-
 def draw_landmarks(frame, face_landmarks, indices, color=(255, 255, 255)) -> None:
     height, width, _ = frame.shape
     for idx in indices:
@@ -144,12 +143,15 @@ def main() -> int:
     if llm_client.init_error:
         print(llm_client.init_error, file=sys.stderr)
     show_landmarks = True
+    use_black_background = False
 
     selected_landmark_indices: Optional[List[int]] = None
 
     try:
         with FaceMeshDetector() as detector:
-            print("Controls: press 'q' to quit, 'l' to toggle landmarks display.")
+            print(
+                "Controls: press 'q' to quit, 'l' to toggle landmarks display, 'b' to toggle background."
+            )
             while True:
                 ok, frame = cap.read()
                 if not ok:
@@ -157,13 +159,18 @@ def main() -> int:
                     break
 
                 results = detector.process(frame)
-                annotated = frame.copy()
+                annotated = (
+                    np.zeros_like(frame)
+                    if use_black_background
+                    else frame.copy()
+                )
                 emotion_text = "Emotion: --"
                 rule_text = "Rule: --"
                 feature_lines = []
                 current_emotion = None
                 face_landmarks = None
 
+                anchor_indices: Optional[List[int]] = selected_landmark_indices
                 if results.multi_face_landmarks:
                     face_landmarks = results.multi_face_landmarks[0]
                     if selected_landmark_indices is None:
@@ -192,19 +199,23 @@ def main() -> int:
                             face_landmarks,
                             selected_landmark_indices,
                         )
+                        anchor_indices = selected_landmark_indices
 
                 thought_renders = thought_engine.update(
                     current_emotion,
                     face_landmarks,
                     annotated.shape,
-                    selected_landmark_indices,
+                    anchor_indices,
                 )
                 for thought_render in thought_renders:
                     style = style_for_emotion(thought_render.emotion)
                     draw_thought_overlay(annotated, thought_render, style)
 
                 fps = fps_counter.update()
-                status_text = f"Landmarks: {'on' if show_landmarks else 'off'}"
+                status_text = (
+                    f"Landmarks: {'on' if show_landmarks else 'off'}"
+                    f" | Bg: {'black' if use_black_background else 'camera'}"
+                )
                 cv2.putText(
                     annotated,
                     status_text,
@@ -266,6 +277,8 @@ def main() -> int:
                     break
                 if key == ord("l"):
                     show_landmarks = not show_landmarks
+                if key == ord("b"):
+                    use_black_background = not use_black_background
     finally:
         cap.release()
         cv2.destroyAllWindows()

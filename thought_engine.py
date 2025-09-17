@@ -6,6 +6,7 @@ import itertools
 import logging
 import queue
 import random
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -246,6 +247,8 @@ class ThoughtEngine:
             elif event.kind == "done":
                 state.status = "latched"
                 state.latched_at = now
+                if state.mode == "ascii":
+                    state.text = self._strip_ascii_fences(state.text)
                 logger.debug(
                     "Thought latched",
                     extra={"request_id": event.request_id, "mode": state.mode},
@@ -311,6 +314,21 @@ class ThoughtEngine:
                 self._event_queue.put(
                     ThoughtEvent("error", request.request_id, str(exc))
                 )
+
+    @staticmethod
+    def _strip_ascii_fences(text: str) -> str:
+        if not text:
+            return text
+
+        candidate = text.replace("\r\n", "\n")
+        if "```" in candidate:
+            candidate = re.sub(r"^```[^\n]*\n?", "", candidate)
+            candidate = re.sub(r"\n?```$", "", candidate)
+
+        if candidate.startswith("\n"):
+            candidate = candidate.lstrip("\n")
+        candidate = candidate.rstrip("\n")
+        return candidate
 
     def _pick_landmark_index(
         self,
