@@ -28,3 +28,9 @@ The demo includes a lightweight rule-based classifier targeting the emotions `co
 It analyses eyebrow height/asymmetry, eye openness, and mouth shape to infer the most likely state, then smooths predictions over the last few frames.
 The active emotion, triggering rule, and the underlying feature values are displayed in the video overlay to help with manual calibration.
 
+## Streaming thoughts overlay
+- When the classifier detects a change in emotion, the app requests a matching “thought” from OpenAI and streams the text live into a floating box.
+- Set the API key before running: `export OPENAI_API_KEY=sk-...`. Without a key, the app falls back to local canned copy.
+- Thought bubbles avoid the detected face, connect to a random facial landmark with a line, colour-shift to match the active emotion, and remain on screen for ~2 seconds after completion.
+- New thoughts spawn at irregular intervals whenever an emotion is active, so multiple bubbles can overlap while their lifetimes intersect.
+- Styling (colours, line widths, fonts) and behaviour (hold duration, placement margins) live in `config.py` for easy iteration.

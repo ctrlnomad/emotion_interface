@@ -1,15 +1,25 @@
+import logging
+import os
 import sys
 import time
+from typing import List, Optional
+
 import cv2
 import mediapipe as mp
 
+from config import (
+    DEFAULT_LLM_CONFIG,
+    DEFAULT_THOUGHT_CONFIG,
+    style_for_emotion,
+)
 from emotion_classifier import RuleBasedEmotionClassifier
+from llm_client import LLMClient
+from overlay import draw_thought_overlay
+from thought_engine import ThoughtEngine
 
 
 WINDOW_TITLE = "Face Landmarks"
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-
-
 class FaceMeshDetector:
     """Wrapper around MediaPipe FaceMesh with sensible defaults."""
 
@@ -54,16 +64,71 @@ class FPSCounter:
         return self.value
 
 
-def draw_landmarks(frame, face_landmarks, color=(0, 255, 0)) -> None:
+def _select_uniform_landmark_indices(
+    face_landmarks, keep_ratio: float = 0.4
+) -> List[int]:
+    total = len(face_landmarks.landmark)
+    if total == 0:
+        return []
+
+    target = max(1, int(total * keep_ratio))
+    coords = [
+        (landmark.x, landmark.y, landmark.z) for landmark in face_landmarks.landmark
+    ]
+
+    seed_index = 4 if total > 4 else 0
+    selected = [seed_index]
+    remaining = set(range(total))
+    remaining.discard(seed_index)
+
+    def distance_sq(a, b) -> float:
+        dx = a[0] - b[0]
+        dy = a[1] - b[1]
+        dz = a[2] - b[2]
+        return dx * dx + dy * dy + dz * dz
+
+    while len(selected) < target and remaining:
+        best_idx = None
+        best_dist = -1.0
+        for idx in remaining:
+            coord = coords[idx]
+            nearest = min(distance_sq(coord, coords[s_idx]) for s_idx in selected)
+            if nearest > best_dist:
+                best_dist = nearest
+                best_idx = idx
+
+        if best_idx is None:
+            break
+
+        selected.append(best_idx)
+        remaining.remove(best_idx)
+
+    selected.sort()
+    return selected
+
+
+def draw_landmarks(frame, face_landmarks, indices, color=(255, 255, 255)) -> None:
     height, width, _ = frame.shape
-    for landmark in face_landmarks.landmark:
+    for idx in indices:
+        landmark = face_landmarks.landmark[idx]
         x = int(landmark.x * width)
         y = int(landmark.y * height)
         if 0 <= x < width and 0 <= y < height:
-            cv2.circle(frame, (x, y), 1, color, -1, lineType=cv2.LINE_AA)
+            cv2.circle(frame, (x, y), 3, color, -1, lineType=cv2.LINE_AA)
 
 
 def main() -> int:
+    if not logging.getLogger().handlers:
+        log_level = os.getenv("EMOTION_INTERFACE_LOG_LEVEL", "INFO").upper()
+        try:
+            resolved_level = getattr(logging, log_level, logging.INFO)
+        except AttributeError:
+            resolved_level = logging.INFO
+        logging.basicConfig(
+            level=resolved_level,
+            format="%(asctime)s [%(levelname)s] %(threadName)s %(name)s: %(message)s",
+        )
+
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Could not open webcam. Ensure a camera is connected and accessible.", file=sys.stderr)
@@ -72,7 +137,15 @@ def main() -> int:
     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
     fps_counter = FPSCounter()
     classifier = RuleBasedEmotionClassifier()
+    thought_engine: Optional[ThoughtEngine] = None
+    llm_client = LLMClient(DEFAULT_LLM_CONFIG)
+    thought_engine = ThoughtEngine(llm_client, DEFAULT_THOUGHT_CONFIG)
+
+    if llm_client.init_error:
+        print(llm_client.init_error, file=sys.stderr)
     show_landmarks = True
+
+    selected_landmark_indices: Optional[List[int]] = None
 
     try:
         with FaceMeshDetector() as detector:
@@ -88,10 +161,17 @@ def main() -> int:
                 emotion_text = "Emotion: --"
                 rule_text = "Rule: --"
                 feature_lines = []
+                current_emotion = None
+                face_landmarks = None
 
                 if results.multi_face_landmarks:
                     face_landmarks = results.multi_face_landmarks[0]
+                    if selected_landmark_indices is None:
+                        selected_landmark_indices = _select_uniform_landmark_indices(
+                            face_landmarks
+                        )
                     emotion_result = classifier.classify(face_landmarks)
+                    current_emotion = emotion_result.label
                     emotion_text = (
                         f"Emotion: {emotion_result.label}"
                         f" ({emotion_result.confidence:.2f})"
@@ -102,8 +182,26 @@ def main() -> int:
                         for name, value in emotion_result.features.items()
                     ]
 
-                    if show_landmarks:
-                        draw_landmarks(annotated, face_landmarks)
+                    if (
+                        show_landmarks
+                        and face_landmarks is not None
+                        and selected_landmark_indices is not None
+                    ):
+                        draw_landmarks(
+                            annotated,
+                            face_landmarks,
+                            selected_landmark_indices,
+                        )
+
+                thought_renders = thought_engine.update(
+                    current_emotion,
+                    face_landmarks,
+                    annotated.shape,
+                    selected_landmark_indices,
+                )
+                for thought_render in thought_renders:
+                    style = style_for_emotion(thought_render.emotion)
+                    draw_thought_overlay(annotated, thought_render, style)
 
                 fps = fps_counter.update()
                 status_text = f"Landmarks: {'on' if show_landmarks else 'off'}"
@@ -171,6 +269,8 @@ def main() -> int:
     finally:
         cap.release()
         cv2.destroyAllWindows()
+        if thought_engine is not None:
+            thought_engine.stop()
 
     return 0
 
